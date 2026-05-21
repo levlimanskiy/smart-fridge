@@ -82,22 +82,7 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; }
 
 ### ФЕЙКОВАЯ БД
 
-INITIAL_PRODUCTS = [
-    {"id": 1, "name": "Гречневая крупа", "emoji": "🥣", "category": "Крупы", "q": 1, "unit": "шт", "days": 365},
-    {"id": 2, "name": "Наполеон", "emoji": "🍰", "category": "Кондитерские изделия", "q": 2, "unit": "шт", "days": 7},
-    {"id": 3, "name": "Батон", "emoji": "🍞", "category": "Хлеб и выпечка", "q": 1, "unit": "шт", "days": 3},
-    {"id": 4, "name": "Индейка бедро", "emoji": "🍗", "category": "Птица", "q": 0.95, "unit": "кг", "days": 4},
-    {"id": 5, "name": "Петрушка", "emoji": "🌿", "category": "Овощи", "q": 100, "unit": "г", "days": 5},
-    {"id": 6, "name": "Сметана", "emoji": "🥛", "category": "Молочное", "q": 180, "unit": "г", "days": 7},
-    {"id": 7, "name": "Пельмени", "emoji": "🍜", "category": "Полуфабрикаты", "q": 700, "unit": "г", "days": 365},
-    {"id": 8, "name": "Томаты черри", "emoji": "🍅", "category": "Овощи", "q": 250, "unit": "г", "days": 5},
-    {"id": 9, "name": "Фасоль", "emoji": "🫘", "category": "Консервация", "q": 400, "unit": "г", "days": 365},
-    {"id": 10, "name": "Огурец", "emoji": "🥒", "category": "Овощи", "q": 2, "unit": "шт", "days": 5},
-    {"id": 11, "name": "Макаронные изделия", "emoji": "🍝", "category": "Крупы", "q": 450, "unit": "г", "days": 365},
-    {"id": 12, "name": "Тунец", "emoji": "🐟", "category": "Рыба", "q": 370, "unit": "г", "days": 4},
-    {"id": 13, "name": "Сыр Моцарелла", "emoji": "🧀", "category": "Молочное", "q": 180, "unit": "г", "days": 14},
-    {"id": 14, "name": "Оливки", "emoji": "🫒", "category": "Масла и соусы", "q": 200, "unit": "г", "days": 365}
-]
+INITIAL_PRODUCTS = []
 
 CATEGORIES = []
 CAT_EMOJI  = {}
