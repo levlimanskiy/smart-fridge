@@ -1,0 +1,20 @@
+# Секреты (САМОЕ ВАЖНОЕ)
+.streamlit/secrets.toml
+
+# Виртуальное окружение
+.venv/
+venv/
+env/
+bin/
+obj/
+
+.vscode/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Кэш Streamlit (иногда создается локально)
+.streamlit/cache/
