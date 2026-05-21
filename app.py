@@ -281,7 +281,6 @@ with tab_chef:
 # ЧАСТЬ 3 - ФИНАНСЫ
 # ════════════════════════════════════════════════════════════════════════════
 with tab_dash:
-    st.subheader("📊 Анти-бухгалтерия")
 
     f = st.session_state["finance"]
     expiring = [p for p in st.session_state.products if p.get("days", 99) <= 2]
