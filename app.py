@@ -94,10 +94,15 @@ RECIPE_DB = []
 if "products" not in st.session_state:
     st.session_state.products = [p.copy() for p in INITIAL_PRODUCTS]
 if "next_id" not in st.session_state:
-    st.session_state.next_id = 5
+    st.session_state.next_id = 1
 if "recipes" not in st.session_state:
     st.session_state.recipes = []
-
+if "finance" not in st.session_state:
+    st.session_state["finance"] = {
+        "total_spent":    0.0,
+        "receipts_count": 0,
+        "cooked_count":   0,
+    }
 ### ЗАГОЛОВОК
 
 st.markdown("## 🥗 SmartFridge & Budget")
@@ -207,6 +212,15 @@ with tab_fridge:
 
                     if normalized: 
                         added = 0
+
+                        receipt_total = sum(
+                            item.get("price", 0) * item.get("package_count", 1)
+                            for item in normalized
+                            if item.get("price") is not None
+                        )
+                        st.session_state["finance"]["total_spent"] += receipt_total
+                        st.session_state["finance"]["receipts_count"] += 1
+
                         for item in normalized:
                             existing = [p["name"].lower() for p in st.session_state.products]
                             if item.get("name", "").lower() not in existing:
@@ -218,7 +232,8 @@ with tab_fridge:
                                     "category": item.get("category", "Другое"),
                                     "q": item.get("q", 1)*item.get("package_count", 1),
                                     "unit": item.get("unit", "шт"),
-                                    "days": item.get("days", 5)
+                                    "days": item.get("days", 5),
+                                    "price": item.get('price', 0)
                                 })
                                 st.session_state.next_id += 1
                                 added += 1
@@ -249,17 +264,17 @@ with tab_chef:
         with st.spinner("ИИ-Шеф думает..."):
             st.session_state.recipes = model.suggest_recipes(st.session_state.products)
 
-        for r in st.session_state.recipes:
-            col_img, col_info = st.columns([1, 2])
-            with col_img:
-                if r.get("image_url"):
-                    st.image(r["image_url"], use_container_width=True)
-                else:
-                    st.markdown(f"<div style='font-size:64px;text-align:center'>{r['emoji']}</div>", unsafe_allow_html=True)
-            with col_info:
-                st.markdown(f"### {r['emoji']} {r['title']}")
-                st.caption(f"⏱ {r['time']} мин · 🥕 {', '.join(r['ingredients'])}")
-                st.info(r["commentary"])
+    for r in st.session_state.recipes:
+        col_img, col_info = st.columns([1, 2])
+        with col_img:
+            if r.get("image_url"):
+                st.image(r["image_url"], use_container_width=True)
+            else:
+                st.markdown(f"<div style='font-size:64px;text-align:center'>{r['emoji']}</div>", unsafe_allow_html=True)
+        with col_info:
+            st.markdown(f"### {r['emoji']} {r['title']}")
+            st.caption(f"⏱ {r['time']} мин · 🥕 {', '.join(r['ingredients'])}")
+            st.info(r["commentary"])
                 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -268,6 +283,7 @@ with tab_chef:
 with tab_dash:
     st.subheader("📊 Анти-бухгалтерия")
 
+    f = st.session_state["finance"]
     expiring = [p for p in st.session_state.products if p.get("days", 99) <= 2]
 
     potential_waste = sum(
@@ -275,37 +291,33 @@ with tab_dash:
         for p in expiring
         if p.get("price") is not None
     )
+    
+    fridge_value = sum(
+    p["price"] * p["q"]
+    for p in st.session_state.products
+    if p.get("price") is not None
+    )
 
-    total_spent = st.session_state.get("total_spent", 0.0)
-    receipts_count = st.session_state.get("receipts_count", 0)
-    cooked_count = st.session_state.get("cooked_count", 0)
-    products_count = len(st.session_state.products)
-
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col4 = st.columns(3)
     col1.metric(
-        "🔴 Потенциально сгорит",
-        f"{potential_waste:.2f} ₽" if potential_waste > 0 else "н/д",
-        f"{len(expiring)} продуктов",
-        delta_color="inverse"
+    "💰 Стоимость холодильника",
+    f"{fridge_value:.2f} ₽" if fridge_value > 0 else "н/д",
+    f"{len(st.session_state.products)} продуктов"
     )
     col2.metric(
         "🧾 Потрачено на продукты",
-        f"{total_spent:.2f} ₽" if total_spent > 0 else "н/д",
-        f"{receipts_count} чеков"
-    )
-    col3.metric(
-        "👨‍🍳 Блюд приготовлено",
-        cooked_count,
+        f"{f['total_spent']:.2f} ₽" if f["total_spent"] > 0 else "н/д",
+        f"{f['receipts_count']} чеков"
     )
     col4.metric(
         "📦 В холодильнике",
-        products_count,
+        len(st.session_state.products),
         "продуктов"
     )
 
     st.divider()
 
-    st.markdown("**Бюджет по категориям**")
+    st.markdown("**Состав холодильника по категориям**")
 
     from collections import defaultdict
     cat_totals = defaultdict(float)
@@ -315,30 +327,9 @@ with tab_dash:
 
     total_cat = sum(cat_totals.values())
 
-    CAT_COLORS = {
-        "Мясо":                  "#ef4444",
-        "Птица":                 "#f97316",
-        "Рыба":                  "#3b82f6",
-        "Морепродукты":          "#06b6d4",
-        "Молочное":              "#f59e0b",
-        "Яйца":                  "#eab308",
-        "Овощи":                 "#22c55e",
-        "Фрукты":                "#84cc16",
-        "Крупы":                 "#a78bfa",
-        "Хлеб и выпечка":        "#fb923c",
-        "Кондитерские изделия":  "#f472b6",
-        "Орехи и сухофрукты":    "#92400e",
-        "Масла и соусы":         "#facc15",
-        "Напитки":               "#38bdf8",
-        "Консервация":           "#6b7280",
-        "Полуфабрикаты":         "#e879f9",
-        "Другое":                "#94a3b8",
-    }
-
     if total_cat > 0:
         for cat, amount in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True):
             pct = amount / total_cat
-            color = CAT_COLORS.get(cat, "#94a3b8")
             col_label, col_bar, col_val = st.columns([2, 3, 1])
             with col_label:
                 st.caption(cat)
@@ -347,7 +338,7 @@ with tab_dash:
             with col_val:
                 st.caption(f"{amount:.0f} ₽")
     else:
-        st.info("Отсканируйте чек, чтобы увидеть реальную разбивку по категориям.")
+        st.info("Отсканируйте чек, чтобы увидеть разбивку по категориям.")
 
     if expiring:
         st.divider()

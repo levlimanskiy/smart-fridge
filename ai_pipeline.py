@@ -52,7 +52,7 @@ RECIPE_PROMPT  = """
 - "title": название блюда на русском
 - "title_en": название блюда на английском (для поиска картинок)
 - "time": время приготовления в минутах (целое число)
-- "ingredients": список ингредиентов из холодильника которые используются (массив строк)
+- "ingredients": массив строк. Каждый элемент должен строго содержать название используемого ингредиента и его необходимое количество для рецепта в формате: "<название>: <кол-во> <ед. изм.>" (например: "петрушка: 10 г", "томаты черри: 150 г", "огурец: 2 шт"). Рассчитывай количество исходя из того, сколько реально нужно на порцию для этого блюда.
 - "commentary": 2-3 предложения о пользе блюда (витамины, минералы, органика, белки и тд)
 - "emoji": один подходящий эмодзи
 
@@ -61,7 +61,7 @@ RECIPE_PROMPT  = """
   "title": "Омлет с помидорами",
   "title_en": "Omelette with tomatoes",
   "time": 10,
-  "ingredients": ["яйца", "помидоры", "молоко"],
+  "ingredients": ["яйца: 2 шт", "томаты черри: 100 г", "молоко: 50 мл"],
   "commentary": "Богат белком и витамином C. Помидоры содержат ликопин — мощный антиоксидант. Лёгкое и питательное блюдо для начала дня.",
   "emoji": "🍳"
 }}]
@@ -123,7 +123,7 @@ class AIModel:
         )]
 
         prompt = NORMALIZATION_PROMPT_1.format(items="\n".join(f"- {i}" for i in food_items))
-        text = self._call_model(prompt, max_tokens=3000)
+        text = self._call_model(prompt, max_tokens=5000)
         if not text:
             return []
 
@@ -153,7 +153,7 @@ class AIModel:
             item_lines.append(f"- {p['name']} ({p['q']} {p['unit']}){flag}")
 
         prompt = RECIPE_PROMPT.format(items="\n".join(item_lines))
-        text = self._call_model(prompt, max_tokens=4000)
+        text = self._call_model(prompt, max_tokens=6000)
         if not text:
             return []
 
