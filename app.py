@@ -82,7 +82,23 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; }
 
 ### ФЕЙКОВАЯ БД
 
-INITIAL_PRODUCTS = []
+INITIAL_PRODUCTS = [
+    {"id": 1, "name": "Гречневая крупа", "emoji": "🥣", "category": "Крупы", "q": 1, "unit": "шт", "days": 365},
+    {"id": 2, "name": "Наполеон", "emoji": "🍰", "category": "Кондитерские изделия", "q": 2, "unit": "шт", "days": 7},
+    {"id": 3, "name": "Батон", "emoji": "🍞", "category": "Хлеб и выпечка", "q": 1, "unit": "шт", "days": 3},
+    {"id": 4, "name": "Индейка бедро", "emoji": "🍗", "category": "Птица", "q": 0.95, "unit": "кг", "days": 4},
+    {"id": 5, "name": "Петрушка", "emoji": "🌿", "category": "Овощи", "q": 100, "unit": "г", "days": 5},
+    {"id": 6, "name": "Сметана", "emoji": "🥛", "category": "Молочное", "q": 180, "unit": "г", "days": 7},
+    {"id": 7, "name": "Пельмени", "emoji": "🍜", "category": "Полуфабрикаты", "q": 700, "unit": "г", "days": 365},
+    {"id": 8, "name": "Томаты черри", "emoji": "🍅", "category": "Овощи", "q": 250, "unit": "г", "days": 5},
+    {"id": 9, "name": "Фасоль", "emoji": "🫘", "category": "Консервация", "q": 400, "unit": "г", "days": 365},
+    {"id": 10, "name": "Огурец", "emoji": "🥒", "category": "Овощи", "q": 2, "unit": "шт", "days": 5},
+    {"id": 11, "name": "Макаронные изделия", "emoji": "🍝", "category": "Крупы", "q": 450, "unit": "г", "days": 365},
+    {"id": 12, "name": "Тунец", "emoji": "🐟", "category": "Рыба", "q": 370, "unit": "г", "days": 4},
+    {"id": 13, "name": "Сыр Моцарелла", "emoji": "🧀", "category": "Молочное", "q": 180, "unit": "г", "days": 14},
+    {"id": 14, "name": "Оливки", "emoji": "🫒", "category": "Масла и соусы", "q": 200, "unit": "г", "days": 365}
+]
+
 CATEGORIES = []
 CAT_EMOJI  = {}
 RECIPE_DB = []
@@ -93,7 +109,7 @@ RECIPE_DB = []
 if "products" not in st.session_state:
     st.session_state.products = [p.copy() for p in INITIAL_PRODUCTS]
 if "next_id" not in st.session_state:
-    st.session_state.next_id = 1
+    st.session_state.next_id = 5
 if "recipes" not in st.session_state:
     st.session_state.recipes = []
 
@@ -153,16 +169,16 @@ with tab_fridge:
                                 to_remove = p['id']
                             else:
                                 p['q'] = new_q
-                            del st.session_state[f"trashing_{p['id']}"]
-                            st.rerun()
+                                del st.session_state[f"trashing_{p['id']}"]
+                                st.rerun()
                     with col_cancel:
                         if st.button("✕", key=f"trash_cancel_{p['id']}"):
                             del st.session_state[f"trashing_{p['id']}"]
                             st.rerun()
 
-        if to_remove is not None:
-            st.session_state.products = [p for p in st.session_state.products if p["id"] != to_remove]
-            st.rerun()
+                    if to_remove is not None:
+                        st.session_state.products = [p for p in st.session_state.products if p["id"] != to_remove]
+                        st.rerun()
 
     st.divider()
 
@@ -215,7 +231,7 @@ with tab_fridge:
                                     "name": item.get("name", "Неизвестно"),
                                     "emoji": item.get("emoji", "📦"),
                                     "category": item.get("category", "Другое"),
-                                    "q": item.get("q", 1),
+                                    "q": item.get("q", 1)*item.get("package_count", 1),
                                     "unit": item.get("unit", "шт"),
                                     "days": item.get("days", 5)
                                 })
@@ -267,32 +283,90 @@ with tab_chef:
 with tab_dash:
     st.subheader("📊 Анти-бухгалтерия")
 
-    expiring = [p for p in st.session_state.products if p["days"] <= 2]
-    potential_waste = len(expiring) * 180
+    expiring = [p for p in st.session_state.products if p.get("days", 99) <= 2]
 
-    col1, col2, col3 = st.columns(3)
-    col1.metric("🟢 Сэкономлено на доставках", "4 200 ₽", "в этом месяце")
-    col2.metric("🔴 Потенциально сгорит", f"{potential_waste} ₽", f"{len(expiring)} продуктов", delta_color="inverse")
-    col3.metric("💛 Средний чек в день", "380 ₽", "на питание")
+    potential_waste = sum(
+        p["price"] * p["q"]
+        for p in expiring
+        if p.get("price") is not None
+    )
+
+    total_spent = st.session_state.get("total_spent", 0.0)
+    receipts_count = st.session_state.get("receipts_count", 0)
+    cooked_count = st.session_state.get("cooked_count", 0)
+    products_count = len(st.session_state.products)
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric(
+        "🔴 Потенциально сгорит",
+        f"{potential_waste:.2f} ₽" if potential_waste > 0 else "н/д",
+        f"{len(expiring)} продуктов",
+        delta_color="inverse"
+    )
+    col2.metric(
+        "🧾 Потрачено на продукты",
+        f"{total_spent:.2f} ₽" if total_spent > 0 else "н/д",
+        f"{receipts_count} чеков"
+    )
+    col3.metric(
+        "👨‍🍳 Блюд приготовлено",
+        cooked_count,
+    )
+    col4.metric(
+        "📦 В холодильнике",
+        products_count,
+        "продуктов"
+    )
 
     st.divider()
+
     st.markdown("**Бюджет по категориям**")
 
-    cat_budget = [
-        ("🍗 Мясо и рыба",  42, "#ef4444"),
-        ("🥛 Молочное",     28, "#f59e0b"),
-        ("🥦 Овощи",        18, "#22c55e"),
-        ("🌾 Крупы",        12, "#3b82f6"),
-    ]
-    for label, pct, color in cat_budget:
-        col_label, col_bar = st.columns([1.5, 3])
-        with col_label:
-            st.caption(label)
-        with col_bar:
-            st.progress(pct / 100)
+    from collections import defaultdict
+    cat_totals = defaultdict(float)
+    for p in st.session_state.products:
+        if p.get("price") is not None:
+            cat_totals[p["category"]] += p["price"] * p["q"]
+
+    total_cat = sum(cat_totals.values())
+
+    CAT_COLORS = {
+        "Мясо":                  "#ef4444",
+        "Птица":                 "#f97316",
+        "Рыба":                  "#3b82f6",
+        "Морепродукты":          "#06b6d4",
+        "Молочное":              "#f59e0b",
+        "Яйца":                  "#eab308",
+        "Овощи":                 "#22c55e",
+        "Фрукты":                "#84cc16",
+        "Крупы":                 "#a78bfa",
+        "Хлеб и выпечка":        "#fb923c",
+        "Кондитерские изделия":  "#f472b6",
+        "Орехи и сухофрукты":    "#92400e",
+        "Масла и соусы":         "#facc15",
+        "Напитки":               "#38bdf8",
+        "Консервация":           "#6b7280",
+        "Полуфабрикаты":         "#e879f9",
+        "Другое":                "#94a3b8",
+    }
+
+    if total_cat > 0:
+        for cat, amount in sorted(cat_totals.items(), key=lambda x: x[1], reverse=True):
+            pct = amount / total_cat
+            color = CAT_COLORS.get(cat, "#94a3b8")
+            col_label, col_bar, col_val = st.columns([2, 3, 1])
+            with col_label:
+                st.caption(cat)
+            with col_bar:
+                st.progress(pct)
+            with col_val:
+                st.caption(f"{amount:.0f} ₽")
+    else:
+        st.info("Отсканируйте чек, чтобы увидеть реальную разбивку по категориям.")
 
     if expiring:
         st.divider()
         st.error(f"⚠️ **{len(expiring)} продукта истекают в ближайшие 2 дня!**")
         for p in expiring:
-            st.markdown(f"- {p['emoji']} **{p['name']}** — {p['days']} д.")
+            price_str = f" — {p['price'] * p['q']:.2f} ₽" if p.get("price") else ""
+            st.markdown(f"- {p['emoji']} **{p['name']}** ({p['q']} {p['unit']}){price_str} — {p['days']} д.")

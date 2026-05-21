@@ -3,12 +3,14 @@ import numpy as np
 import cv2
 from PIL import Image
 import streamlit as st
+import re
 
 class QRReader:
     def __init__(self, qr_file, api: str):
         self.img = Image.open(qr_file)
         self.api = api
         self.qr_string: str | None = None
+
 
     def decode_qr(self) -> str | None:
         img_array = np.array(self.img)
@@ -19,7 +21,7 @@ class QRReader:
 
     def get_receipt_info(self) -> list[str]:
         if not self.decode_qr():
-            #st.error("QR-код не распознан. Попробуйте более чёткое фото.")  
+            st.error("QR-код не распознан. Попробуйте более чёткое фото.")  
             return []
         
         url = "https://proverkacheka.com/api/v1/check/get"
@@ -36,8 +38,19 @@ class QRReader:
             if not isinstance(items, list):
                 st.error("Неожиданный формат ответа от ФНС.")
                 return []
+            
+            item_strings = []
+            for item in items:
+                name = item.get("name")
+                name = re.sub(r"\(.*?\)", "", name)
+                name = re.sub(r"\s+", " ", name).strip()
 
-            return [item["name"] for item in items if "name" in item]
+                price = item.get("price", 0) / 100
+                qty = item.get("quantity")
+                item_string = f"{name} — {price:.2f} руб. x {qty} шт."
+                item_strings.append(item_string)
+
+            return item_strings
 
         except requests.exceptions.Timeout:
             st.error("Сервис ФНС не ответил вовремя. Попробуйте ещё раз.")
