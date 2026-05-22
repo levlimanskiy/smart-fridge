@@ -4,6 +4,7 @@ import openai
 import streamlit as st
 import requests
 import time
+from collections import defaultdict
 
 ### ПРОМПТЫ
  
@@ -68,6 +69,22 @@ RECIPE_PROMPT  = """
 
 Продукты в холодильнике:
 {items}
+"""
+
+FINANCIAL_PROMPT = """
+Ты финансовый советник и диетолог. Проанализируй состояние холодильника и траты пользователя.
+Напиши короткий персональный комментарий (3-4 предложения) на русском языке.
+Упомяни: сколько потрачено, что скоро истечёт, какая категория доминирует по стоимости, и один конкретный совет.
+Будь дружелюбным, конкретным, не используй общие фразы.
+
+Данные:
+- Потрачено всего: {total_spent} ₽ ({receipts_count} чеков)
+- Стоимость холодильника сейчас: {fridge_value} ₽
+- Выброшено продуктов на: {wasted_value} ₽
+- Продуктов истекает в ближайшие 2 дня: {expiring_count} ({expiring_names})
+- Топ категория по стоимости: {top_category}
+
+Верни ТОЛЬКО текст комментария, без JSON, без заголовков.
 """
 
 ### НАША ЧУДО-МОДЕЛЬКА
@@ -166,3 +183,30 @@ class AIModel:
             time.sleep(0.3)
 
         return recipes
+    
+    def financial_insight(self, finance: dict, products: list) -> str | None:
+
+        expiring = [p for p in products if p.get("days", 99) <= 2]
+        expiring_names = ", ".join(p["name"] for p in expiring) if expiring else "нет"
+
+        fridge_value = sum(
+            p["price"] * p["q"] for p in products if p.get("price") is not None
+        )
+
+        cat_totals = defaultdict(float)
+        for p in products:
+            if p.get("price") is not None:
+                cat_totals[p["category"]] += p["price"] * p["q"]
+        top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "н/д" # type: ignore
+
+        prompt = FINANCIAL_PROMPT.format(
+            total_spent    = f"{finance.get('total_spent', 0):.2f}",
+            receipts_count = finance.get("receipts_count", 0),
+            fridge_value   = f"{fridge_value:.2f}",
+            wasted_value   = f"{finance.get('wasted_value', 0):.2f}",
+            expiring_count = len(expiring),
+            expiring_names = expiring_names,
+            top_category   = top_category,
+        )
+
+        return self._call_model(prompt, max_tokens=1000)

@@ -2,6 +2,96 @@ import streamlit as st
 from PIL import Image
 from qr_reader import QRReader
 from ai_pipeline import AIModel
+from repository import TalkDB
+import datetime
+import pandas as pd
+from collections import defaultdict
+
+### CONFIG СТРАНИЦЫ
+
+st.set_page_config(
+    page_title="SmartFridge & Budget",
+    page_icon="🥗",
+    layout="centered",
+)
+
+
+### АВТОРИЗАЦИЯ
+
+db = TalkDB(st.secrets["gcp_service_account"], "smartfridge")
+
+def show_login():
+    st.markdown("## 🥗 SmartFridge & Budget")
+    st.caption("Войдите или зарегистрируйтесь")
+    st.divider()
+
+    tab_login, tab_register = st.tabs(["Войти", "Регистрация"])
+
+    with tab_login:
+        name = st.text_input("Имя пользователя", key="login_name")
+        pin  = st.text_input("PIN-код", type="password", key="login_pin")
+
+        if st.button("Войти", use_container_width=True, type="primary"):
+            user = auth_user(name.strip(), pin.strip())
+            if user:
+                st.session_state["user"] = user
+                st.rerun()
+            else:
+                st.error("Неверное имя или PIN-код.")
+
+    with tab_register:
+        new_name = st.text_input("Придумайте имя", key="reg_name")
+        new_pin  = st.text_input("Придумайте PIN-код (4 цифры)", type="password", key="reg_pin")
+        new_pin2 = st.text_input("Повторите PIN-код", type="password", key="reg_pin2")
+
+        if st.button("Зарегистрироваться", use_container_width=True, type="primary"):
+            if not new_name.strip():
+                st.error("Введите имя.")
+            elif not new_pin.strip().isdigit() or len(new_pin.strip()) != 4:
+                st.error("PIN должен состоять из 4 цифр.")
+            elif new_pin != new_pin2:
+                st.error("PIN-коды не совпадают.")
+            else:
+                user = register_user(new_name.strip(), new_pin.strip())
+                if user:
+                    st.session_state["user"] = user
+                    st.success(f"Добро пожаловать, {user['name']}!")
+                    st.rerun()
+
+def auth_user(name: str, pin: str) -> dict | None:
+    
+    try:
+        users = db.get_records("users")
+        for row in users:
+            if row["name"].lower() == name.lower() and str(row["pin"]) == pin:
+                return {"id": row["id"], "name": row["name"]}
+        return None
+    except Exception as e:
+        st.error(f"Ошибка авторизации: {e}")
+        return None
+    
+def register_user(name: str, pin: str) -> dict | None:
+    
+    try:
+        users = db.get_records("users")
+
+        if any(row["name"].lower() == name.lower() for row in users):
+            st.error("Это имя уже занято.")
+            return None
+
+        new_id = max((row["id"] for row in users), default=0) + 1
+        db.append_row("users", [new_id, name, pin])
+        return {"id": new_id, "name": name}
+
+    except Exception as e:
+        st.error(f"Ошибка регистрации: {e}")
+        return None
+
+if "user" not in st.session_state:
+    show_login()
+    st.stop()
+
+st.caption(f"👤 {st.session_state['user']['name']}")
 
 ### ФУНКЦИИ-ПОМОЩНИКИ
 
@@ -12,18 +102,44 @@ def expiry_badge(days: int) -> str:
         return f'<span class="badge badge-warn">🟡 {days} д.</span>'
     return f'<span class="badge badge-ok">🟢 {days} д.</span>'
 
-def match_recipes(products):
-    names = " ".join(p["name"].lower() for p in products)
-    matched = [r for r in RECIPE_DB if any(t in names for t in r["tags"])]
-    return matched[:3] if matched else RECIPE_DB[:2]
+def sync_products(db: TalkDB, products: list, user_id: int):
+    all_products = db.get_records("products")
+    other_users = [
+        [p["id"], p["user_id"], p["name"], p["emoji"],
+         p["category"], p["q"], p["unit"], p["days"], p.get("price", "")]
+        for p in all_products if p["user_id"] != user_id
+    ]
+    my_products = [
+        [p["id"], user_id, p["name"], p["emoji"],
+         p["category"], p["q"], p["unit"], p["days"], p.get("price", "")]
+        for p in products
+    ]
+    db.clear_and_write("products", 
+        [["id", "user_id", "name", "emoji", "category", "q", "unit", "days", "price"]]
+        + other_users
+        + my_products
+    )
 
-### CONFIG СТРАНИЦЫ
+def log_event(db: TalkDB, user_id: int, event_type: str, product: dict):
+    events = db.get_records("events")
+    new_id = max((e["id"] for e in events), default=0) + 1
+    value  = (product.get("price", 0) or 0) / product.get("q_old", 0) * product.get("q", 0) 
+    db.append_row("events", [
+        new_id, user_id, event_type,
+        product["name"], product.get("category", ""),
+        value, str(datetime.date.today())
+    ])
 
-st.set_page_config(
-    page_title="SmartFridge & Budget",
-    page_icon="🥗",
-    layout="centered",
-)
+    if event_type == "trash":
+        st.session_state["finance"]["wasted_value"] += value
+    elif event_type == "cook":
+        st.session_state["finance"]["cooked_count"] += 1
+    st.session_state["events"].append({
+        "id": new_id, "user_id": user_id, "type": event_type,
+        "product_name": product["name"], "category": product.get("category", ""),
+        "value": value, "date": str(datetime.date.today())
+    })
+
 
 ### ВЕРСТКА CSS
 
@@ -80,29 +196,62 @@ h1, h2, h3 { font-family: 'Syne', sans-serif !important; }
 </style>
 """, unsafe_allow_html=True)
 
-### ФЕЙКОВАЯ БД
+### МИНИ-БД
 
-INITIAL_PRODUCTS = []
-
-CATEGORIES = []
-CAT_EMOJI  = {}
-RECIPE_DB = []
-
-
-### ОПЕРАТИВНАЯ ПАМЯТЬ САЙТА
+user_id = st.session_state["user"]["id"]
 
 if "products" not in st.session_state:
-    st.session_state.products = [p.copy() for p in INITIAL_PRODUCTS]
-if "next_id" not in st.session_state:
-    st.session_state.next_id = 1
+    all_products = db.get_records("products")
+    st.session_state.products = [
+        {
+            "id":       p["id"],
+            "name":     p["name"],
+            "emoji":    p["emoji"],
+            "category": p["category"],
+            "q":        p["q"],
+            "unit":     p["unit"],
+            "days":     p["days"],
+            "price":    p["price"] if p["price"] != "" else None,
+        }
+        for p in all_products if p["user_id"] == user_id
+    ]
+    st.session_state.next_id = max(
+        (p["id"] for p in st.session_state.products), default=0
+    ) + 1
+
+
 if "recipes" not in st.session_state:
     st.session_state.recipes = []
-if "finance" not in st.session_state:
+
+if "receipts" not in st.session_state:
+    all_receipts = db.get_records("receipts")
+    user_receipts = [r for r in all_receipts if r["user_id"] == user_id]
+    st.session_state["receipts"] = user_receipts
     st.session_state["finance"] = {
-        "total_spent":    0.0,
-        "receipts_count": 0,
+        "total_spent":    sum(r["total"] for r in user_receipts),
+        "receipts_count": len(user_receipts),
         "cooked_count":   0,
+        "wasted_value":   0.0
     }
+
+if "events" not in st.session_state:
+    all_events = db.get_records("events")
+    user_events = [e for e in all_events if e["user_id"] == user_id]
+    st.session_state["events"] = user_events
+    st.session_state["finance"]["wasted_value"] = sum(
+        e["value"] for e in user_events if e["type"] == "trash"
+    )
+
+if "finance" not in st.session_state:
+    user_receipts = st.session_state["receipts"]
+    user_events   = st.session_state["events"]
+    st.session_state["finance"] = {
+        "total_spent":    sum(float(str(r["total"]).replace(",", ".")) for r in user_receipts),
+        "receipts_count": len(user_receipts),
+        "cooked_count":   sum(1 for e in user_events if e["type"] == "cook"),
+        "wasted_value":   sum(float(str(e["value"]).replace(",", ".")) for e in user_events if e["type"] == "trash"),
+    }
+
 ### ЗАГОЛОВОК
 
 st.markdown("## 🥗 SmartFridge & Budget")
@@ -121,27 +270,58 @@ with tab_fridge:
         st.info("Холодильник пуст — добавьте продукты ниже!")
     else:
         to_remove = None
+        to_remove_type = None
+
         for p in st.session_state.products:
-            col_emoji, col_info, col_badge, q, unit, col_trash = st.columns(6)
+            col_emoji, col_info, col_badge, q, unit, col_cook, col_trash = st.columns(7)
+
             with col_emoji:
                 st.markdown(f"<p style='font-size:24px;margin:6px 0'>{p['emoji']}</p>", unsafe_allow_html=True)
-
             with col_info:
                 st.markdown(f"**{p['name']}**  \n<span style='font-size:11px;color:#64748b'>{p['category']}</span>", unsafe_allow_html=True)
-
             with col_badge:
                 st.markdown(expiry_badge(p["days"]), unsafe_allow_html=True)
-
             with q:
                 st.markdown(f"<p style='font-size:24px;margin:6px 0'>{p['q']}</p>", unsafe_allow_html=True)
-
             with unit:
                 st.markdown(f"<p style='font-size:24px;margin:6px 0'>{p['unit']}</p>", unsafe_allow_html=True)
+
+            with col_cook:
+                if st.button("🍳", key=f"cook_{p['id']}", help="Приготовить"):
+                    st.session_state[f"cooking_{p['id']}"] = True
+
+                if st.session_state.get(f"cooking_{p['id']}"):
+                    amount = st.number_input(
+                        f"Сколько использовать? (есть {p['q']} {p['unit']})",
+                        min_value=0.0,
+                        max_value=float(p['q']),
+                        value=float(p['q']),
+                        step=1.0,
+                        key=f"cook_amount_{p['id']}"
+                    )
+                    col_confirm, col_cancel = st.columns(2)
+                    with col_confirm:
+                        if st.button("✅", key=f"cook_confirm_{p['id']}"):
+                            new_q = p['q'] - amount
+                            if new_q <= 0:
+                                to_remove = p['id']
+                                to_remove_type = "cook"
+                            else:
+                                q_old = p['q']
+                                p['q'] = new_q
+                                del st.session_state[f"cooking_{p['id']}"]
+                                log_event(db, user_id, "cook", {**p, "q_old": q_old, "q": amount})
+                                sync_products(db, st.session_state.products, user_id)
+                                st.rerun()
+                    with col_cancel:
+                        if st.button("✕", key=f"cook_cancel_{p['id']}"):
+                            del st.session_state[f"cooking_{p['id']}"]
+                            st.rerun()
 
             with col_trash:
                 if st.button("🗑", key=f"trash_{p['id']}", help="Выбросить"):
                     st.session_state[f"trashing_{p['id']}"] = True
-                
+
                 if st.session_state.get(f"trashing_{p['id']}"):
                     amount = st.number_input(
                         f"Сколько выбросить? (осталось {p['q']} {p['unit']})",
@@ -153,22 +333,29 @@ with tab_fridge:
                     )
                     col_confirm, col_cancel = st.columns(2)
                     with col_confirm:
-                        if st.button("✅ ", key=f"trash_confirm_{p['id']}"):
+                        if st.button("✅", key=f"trash_confirm_{p['id']}"):
                             new_q = p['q'] - amount
                             if new_q <= 0:
                                 to_remove = p['id']
+                                to_remove_type = "trash"
                             else:
+                                q_old = p['q']
                                 p['q'] = new_q
                                 del st.session_state[f"trashing_{p['id']}"]
+                                log_event(db, user_id, "trash", {**p, "q_old": q_old, "q": amount})
+                                sync_products(db, st.session_state.products, user_id)
                                 st.rerun()
                     with col_cancel:
                         if st.button("✕", key=f"trash_cancel_{p['id']}"):
                             del st.session_state[f"trashing_{p['id']}"]
                             st.rerun()
 
-                    if to_remove is not None:
-                        st.session_state.products = [p for p in st.session_state.products if p["id"] != to_remove]
-                        st.rerun()
+        if to_remove is not None:
+            product_to_log = next(p for p in st.session_state.products if p["id"] == to_remove)
+            log_event(db, user_id, to_remove_type, product_to_log) # type: ignore
+            st.session_state.products = [p for p in st.session_state.products if p["id"] != to_remove]
+            sync_products(db, st.session_state.products, user_id)
+            st.rerun()
 
     st.divider()
 
@@ -195,7 +382,7 @@ with tab_fridge:
 
             model = AIModel(api_ai, folder_ai, uri_ai)
 
-            if qr_data == []:
+            if not qr_data:
                 st.error("QR-код не найден. Попробуйте более чёткое фото.")
             else:
                 st.success(f"✅ QR считан")
@@ -220,7 +407,7 @@ with tab_fridge:
                         )
                         st.session_state["finance"]["total_spent"] += receipt_total
                         st.session_state["finance"]["receipts_count"] += 1
-
+                        
                         for item in normalized:
                             existing = [p["name"].lower() for p in st.session_state.products]
                             if item.get("name", "").lower() not in existing:
@@ -233,7 +420,7 @@ with tab_fridge:
                                     "q": item.get("q", 1)*item.get("package_count", 1),
                                     "unit": item.get("unit", "шт"),
                                     "days": item.get("days", 5),
-                                    "price": item.get('price', 0)
+                                    "price": item.get('price', 0)*item.get("package_count", 1)
                                 })
                                 st.session_state.next_id += 1
                                 added += 1
@@ -244,10 +431,21 @@ with tab_fridge:
                                         p["q"] += item.get("q", 1)
                                         break
 
+                        sync_products(db, st.session_state.products, user_id)
+
+                        receipts = db.get_records("receipts")
+                        new_receipt_id = max((r["id"] for r in receipts), default=0) + 1
+                        db.append_row("receipts", [
+                            new_receipt_id,
+                            st.session_state["user"]["id"],
+                            str(datetime.date.today()),
+                            receipt_total,
+                            added
+                        ])
+                        st.session_state["receipts"] = db.get_records("receipts")
 
                         st.success(f"✅ Добавлено {added} новых продуктов в холодильник!")
                         st.rerun()
-
 # ════════════════════════════════════════════════════════════════════════════
 # ЧАСТЬ 2 - ИИ ШЕФ
 # ════════════════════════════════════════════════════════════════════════════
@@ -283,46 +481,57 @@ with tab_chef:
 with tab_dash:
 
     f = st.session_state["finance"]
+    receipts = st.session_state.get("receipts", [])
     expiring = [p for p in st.session_state.products if p.get("days", 99) <= 2]
 
-    potential_waste = sum(
-        p["price"] * p["q"]
-        for p in expiring
+    fridge_value = sum(
+        p["price"]
+        for p in st.session_state.products
         if p.get("price") is not None
     )
-    
-    fridge_value = sum(
-    p["price"] * p["q"]
-    for p in st.session_state.products
-    if p.get("price") is not None
-    )
 
-    col1, col2, col4 = st.columns(3)
+    col1, col2 = st.columns(2)
     col1.metric(
-    "💰 Стоимость холодильника",
-    f"{fridge_value:.2f} ₽" if fridge_value > 0 else "н/д",
-    f"{len(st.session_state.products)} продуктов"
+        "💰 Стоимость холодильника",
+        f"{fridge_value:.2f} ₽" if fridge_value > 0 else "н/д",
+        f"{len(st.session_state.products)} продуктов"
     )
+    
     col2.metric(
-        "🧾 Потрачено на продукты",
-        f"{f['total_spent']:.2f} ₽" if f["total_spent"] > 0 else "н/д",
-        f"{f['receipts_count']} чеков"
-    )
-    col4.metric(
         "📦 В холодильнике",
         len(st.session_state.products),
         "продуктов"
     )
 
+    col3, col4 = st.columns(2)
+    col3.metric(
+        "🧾 Потрачено на продукты",
+        f"{f['total_spent']:.2f} ₽" if f["total_spent"] > 0 else "н/д",
+        f"{f['receipts_count']} чеков"
+    )
+    col4.metric(
+        "🗑 Из них пришлось выбросить",
+        f"{f['wasted_value']:.2f} ₽" if f["wasted_value"] > 0 else "н/д",
+        "реальные потери"
+    )
+    
     st.divider()
+
+    if receipts:
+        st.markdown("**📈 Динамика трат**")
+        chart_data = pd.DataFrame(receipts)[["date", "total"]].copy()
+        chart_data["date"]  = pd.to_datetime(chart_data["date"])
+        chart_data["total"] = pd.to_numeric(chart_data["total"], errors="coerce")
+        chart_data = chart_data.set_index("date").sort_index()
+        st.line_chart(chart_data, y="total", use_container_width=True)
+        st.divider()
 
     st.markdown("**Состав холодильника по категориям**")
 
-    from collections import defaultdict
     cat_totals = defaultdict(float)
     for p in st.session_state.products:
         if p.get("price") is not None:
-            cat_totals[p["category"]] += p["price"] * p["q"]
+            cat_totals[p["category"]] += p["price"] 
 
     total_cat = sum(cat_totals.values())
 
@@ -339,9 +548,29 @@ with tab_dash:
     else:
         st.info("Отсканируйте чек, чтобы увидеть разбивку по категориям.")
 
+    st.divider()
+
+    # ИИ совет
+    st.markdown("**🤖 ИИ-советник**")
+    if st.button("💡 Получить финансовый совет", use_container_width=True):
+        api_ai = st.secrets.ai.YANDEX_API_KEY
+        folder_ai = st.secrets.ai.YANDEX_FOLDER_ID
+        uri_ai = st.secrets.ai.YANDEX_MODEL_URI
+        insight_model = AIModel(api_ai, folder_ai, uri_ai)
+
+        with st.spinner("Анализирую ваши траты..."):
+            insight = insight_model.financial_insight(f, st.session_state.products)
+
+        if insight:
+            st.session_state["financial_insight"] = insight
+
+    if st.session_state.get("financial_insight"):
+        st.info(st.session_state["financial_insight"])
+
     if expiring:
         st.divider()
         st.error(f"⚠️ **{len(expiring)} продукта истекают в ближайшие 2 дня!**")
         for p in expiring:
             price_str = f" — {p['price'] * p['q']:.2f} ₽" if p.get("price") else ""
             st.markdown(f"- {p['emoji']} **{p['name']}** ({p['q']} {p['unit']}){price_str} — {p['days']} д.")
+
