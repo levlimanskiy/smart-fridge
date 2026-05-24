@@ -190,13 +190,13 @@ class AIModel:
         expiring_names = ", ".join(p["name"] for p in expiring) if expiring else "нет"
 
         fridge_value = sum(
-            p["price"] * p["q"] for p in products if p.get("price") is not None
+            p["price"]  for p in products if p.get("price") is not None
         )
 
         cat_totals = defaultdict(float)
         for p in products:
             if p.get("price") is not None:
-                cat_totals[p["category"]] += p["price"] * p["q"]
+                cat_totals[p["category"]] += p["price"] 
         top_category = max(cat_totals, key=cat_totals.get) if cat_totals else "н/д" # type: ignore
 
         prompt = FINANCIAL_PROMPT.format(

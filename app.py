@@ -123,7 +123,8 @@ def sync_products(db: TalkDB, products: list, user_id: int):
 def log_event(db: TalkDB, user_id: int, event_type: str, product: dict):
     events = db.get_records("events")
     new_id = max((e["id"] for e in events), default=0) + 1
-    value  = (product.get("price", 0) or 0) / product.get("q_old", 0) * product.get("q", 0) 
+    value = product.get("price", 0) or 0
+        
     db.append_row("events", [
         new_id, user_id, event_type,
         product["name"], product.get("category", ""),
@@ -227,20 +228,11 @@ if "receipts" not in st.session_state:
     all_receipts = db.get_records("receipts")
     user_receipts = [r for r in all_receipts if r["user_id"] == user_id]
     st.session_state["receipts"] = user_receipts
-    st.session_state["finance"] = {
-        "total_spent":    sum(r["total"] for r in user_receipts),
-        "receipts_count": len(user_receipts),
-        "cooked_count":   0,
-        "wasted_value":   0.0
-    }
 
 if "events" not in st.session_state:
     all_events = db.get_records("events")
     user_events = [e for e in all_events if e["user_id"] == user_id]
     st.session_state["events"] = user_events
-    st.session_state["finance"]["wasted_value"] = sum(
-        e["value"] for e in user_events if e["type"] == "trash"
-    )
 
 if "finance" not in st.session_state:
     user_receipts = st.session_state["receipts"]
@@ -249,7 +241,7 @@ if "finance" not in st.session_state:
         "total_spent":    sum(float(str(r["total"]).replace(",", ".")) for r in user_receipts),
         "receipts_count": len(user_receipts),
         "cooked_count":   sum(1 for e in user_events if e["type"] == "cook"),
-        "wasted_value":   sum(float(str(e["value"]).replace(",", ".")) for e in user_events if e["type"] == "trash"),
+        "wasted_value":   sum(float(str(e["value"]).replace(",", ".")) for e in user_events if e["type"] == "trash")
     }
 
 ### ЗАГОЛОВОК
@@ -309,8 +301,9 @@ with tab_fridge:
                             else:
                                 q_old = p['q']
                                 p['q'] = new_q
+                                p['price'] = p['price'] * (new_q / q_old)
                                 del st.session_state[f"cooking_{p['id']}"]
-                                log_event(db, user_id, "cook", {**p, "q_old": q_old, "q": amount})
+                                log_event(db, user_id, "cook", {**p, "q": amount})
                                 sync_products(db, st.session_state.products, user_id)
                                 st.rerun()
                     with col_cancel:
@@ -341,8 +334,9 @@ with tab_fridge:
                             else:
                                 q_old = p['q']
                                 p['q'] = new_q
+                                p['price'] = p['price'] * (new_q / q_old)
                                 del st.session_state[f"trashing_{p['id']}"]
-                                log_event(db, user_id, "trash", {**p, "q_old": q_old, "q": amount})
+                                log_event(db, user_id, "trash", {**p, "q": amount})
                                 sync_products(db, st.session_state.products, user_id)
                                 st.rerun()
                     with col_cancel:
@@ -442,7 +436,10 @@ with tab_fridge:
                             receipt_total,
                             added
                         ])
-                        st.session_state["receipts"] = db.get_records("receipts")
+
+                        # рецепты для текущей сессии
+                        all_receipts = db.get_records("receipts")
+                        st.session_state["receipts"] = [r for r in all_receipts if r["user_id"] == user_id]
 
                         st.success(f"✅ Добавлено {added} новых продуктов в холодильник!")
                         st.rerun()
@@ -571,6 +568,6 @@ with tab_dash:
         st.divider()
         st.error(f"⚠️ **{len(expiring)} продукта истекают в ближайшие 2 дня!**")
         for p in expiring:
-            price_str = f" — {p['price'] * p['q']:.2f} ₽" if p.get("price") else ""
+            price_str = f" — {p['price'] :.2f} ₽" if p.get("price") else ""
             st.markdown(f"- {p['emoji']} **{p['name']}** ({p['q']} {p['unit']}){price_str} — {p['days']} д.")
 
